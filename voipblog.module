@@ -1,0 +1,311 @@
+<?php
+/**
+ * @file Enables users to create and access audio blog entries via telephone
+ */
+
+foreach (array('voipblog.scripts.inc') as $file) {
+  require_once(dirname(__FILE__) . DIRECTORY_SEPARATOR . $file);
+}
+
+/**
+ * Constant definitions
+ */
+
+// TODO: move the following constants to the admin/setup area
+
+// General parameters
+
+define('VOIPBLOG_MAX_STORY_DURATION', 300); // 300 seconds
+
+
+// Node parameters
+
+define('VOIPBLOG_NODE_PROMOTE', 1);
+
+define('VOIPBLOG_AUDIO_FIELD_NAME', 'field_voipblog_audio');
+
+define('VOIPBLOG_TYPE_FIELD_NAME', 'field_voipblog_type');
+
+
+// Email parameters
+
+define('VOIPBLOG_EMAIL_SUBJECT', 'New VOIPBLOG story of type: @voipblog_type');
+
+define('VOIPBLOG_EMAIL_BODY', "voipblog_type: @voipblog_type,\ncall_id: @call_id,\ncaller_number: @caller_number,\nstart_time: @start_time,\nrecording_url: @recording_url,\nrecording_duration: @recording_duration");
+
+
+// Audio blog parameters
+
+define('VOIPBLOG_BLOG_TITLE', 'New audio blog of type: @voipblog_type');
+
+define('VOIPBLOG_BLOG_BODY', "voipblog_type: @voipblog_type,\ncall_id: @call_id,\ncaller_number: @caller_number,\nstart_time: @start_time,\nrecording_url: @recording_url,\nrecording_duration: @recording_duration");
+
+
+
+/**
+ * Implementation of hook_perm().
+ */
+function voipblog_perm() {
+  return array('administer voipblog');
+}
+
+/*
+ * Implementation of hook_menu()
+ */
+function voipblog_menu() {
+  $items = array();
+
+  $items['admin/settings/voipblog'] = array(
+    'title' => 'Audioblog',
+    'description' => 'voipblog configuration.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('voipblog_admin_form', NULL),
+    'access arguments' => array('administer voipblog'),
+  );
+
+  return $items;
+}
+
+function voipblog_admin_form($configuration) {
+  $form['voipblog_node_type'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Audio blog node type'),
+    '#description' => t('The node type associated with the newly created voipblog entries. If empty, the "story" type will be used.'),
+    '#default_value' => variable_get('voipblog_node_type', ''),
+  );
+
+  $form['voipblog_email'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Audio blog destination email'),
+    '#description' => t("The email address(es) to send the recorded stories to. If empty, no email messages will be sent."),
+    '#default_value' => variable_get('voipblog_email', ''),
+  );
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Save'),
+  );
+
+  return $form;
+}
+
+function voipblog_admin_form_submit($form, &$form_state) {
+  if ($form_state['values']['voipblog_node_type']) {
+    drupal_set_message(t('Audioblog node type updated.'));
+    $node_type_tmp = trim($form_state['values']['voipblog_node_type']);
+    $node_type = $node_type_tmp ? $node_type_tmp : 'story';
+    variable_set('voipblog_node_type', $node_type);
+  }
+
+  if ($form_state['values']['voipblog_email']) {
+    drupal_set_message(t('Story destination email updated.'));
+    $email = trim($form_state['values']['voipblog_email']);
+    variable_set('voipblog_email', $email);
+  }
+}
+
+/**
+ * Process newly recorded voipblog entries
+ */
+function voipblog_recording_callback($call_id, $recording_url, $recording_duration, $serialized_options='') {
+
+watchdog('voipblog', "voipblog_recording_callback($call_id, $recording_url, $recording_duration, $serialized_options)");
+
+  $rc = TRUE;
+  $options = unserialize($serialized_options);
+
+  // Log call blast with watchdog
+$log_message = t("(New voipblog recorded) call_id: $call_id, caller_number: $caller_number, start_time: $start_time, recording_url: $recording_url, recording_duration: $recording_duration, voipblog_type: $voipblog_type, options: " . print_r($options, TRUE));
+watchdog('voipblog', $log_message);
+
+  $cid = VoipCall::getCidFromCallId($call_id);
+  $call = VoipCall::load($cid);
+  $caller_number = $call->getCallerNumber();
+  $start_time = $call->getStartTime();
+
+  $options['call_id'] = $call_id; 
+  $options['caller_number'] = $caller_number;
+  $options['start_time'] = $start_time;
+  $options['recording_url'] = $recording_url; 
+  $options['recording_duration'] = $recording_duration;
+/*******
+                  '@node_type' => $options['node_type'],  
+                  '@audio_field_name' => $options['audio_field_name'],  
+                  '@type_field_name' => $options['type_field_name',  
+            );
+******/
+
+  // send email notification
+  $to = variable_get('voipblog_email', NULL);
+  if($to) {
+    $mail=drupal_mail('voipblog', 'new_recording', $to, language_default(), $options);
+    $rc = $mail['result'];
+  }
+
+  // create voipblog entry
+  if($rc) {
+    voipblog_create_node($recording_url, $options);
+  }
+  
+  if ($rc){
+    return t('Success.');
+  }
+  else {
+    return t('Failure');
+  }
+}
+
+
+/**
+ * Implementation of hook_mail
+ */
+function voipblog_mail($key, &$message, $options) {
+
+ switch ($key) {
+   case 'new_recording':
+     foreach($options as $option_name => $option_value) {
+       $params["@$option_name"] = $option_value;
+     }
+     $message['subject'] = t(VOIPBLOG_EMAIL_SUBJECT, $params);
+     $message['body'] = t(VOIPBLOG_EMAIL_BODY, $params);
+   break;
+  }
+}
+
+/**
+ * Create an voipblog node
+ */
+function voipblog_create_node($url, $options=array()) {
+  $node_type = $options['node_type'];
+  $node->type = $node_type ? $node_type : variable_get('voipblog_node_type', 'story');
+
+  $node->promote = VOIPBLOG_NODE_PROMOTE;
+
+  foreach($options as $option_name => $option_value) {
+    $params["@$option_name"] = $option_value;
+  }
+  $node->title = t(VOIPBLOG_BLOG_TITLE, $params);
+  $node->body = t(VOIPBLOG_BLOG_BODY, $params);
+
+  $voipblog_type = $options['voipblog_type'];
+  if($voipblog_type) { 
+    $vocab_name = t('When');
+    _voipblog_save_category($node, $vocab_name, $voipblog_type);
+  }
+
+  $file = _voipblog_transfer_file($url);
+  if($file) {
+    $field_name_tmp = $options['audio_field_name'];
+    $field_name = $field_name_tmp ? $field_name_tmp : VOIPBLOG_AUDIO_FIELD_NAME;
+    $field = &$node->$field_name;
+    $field[1]['fid'] = $file['fid'];
+  }
+
+  // add $options elements as fields in the new node
+  foreach($options as $option_name => $option_value) {
+    $node->$option_name = $option_value;
+  }
+
+  // create the node and let the hooks convert the new fields into something useful
+  node_save($node);
+
+  // remove the $options fields
+  foreach($options as $option_name => $option_value) {
+    unset($node->$option_name);
+  }
+
+  return $node;
+}
+
+/**
+ * Set the taxonomy term associated with the term name provided
+ */
+function _voipblog_save_category(&$node, $vocab_name, $term_name) {
+// TODO: make $vocab_name optional for voipblogs
+  // determine the vocabulary id associated with $vocab_name for the given node
+  $vocab_id = _voipblog_get_vocabulary_id($node, $vocab_name);
+
+  // determine the term id associated with the term name
+  $terms= taxonomy_get_term_by_name($term_name);
+  $tid = NULL;
+  foreach($terms as $term) {
+    if($term->vid == $vocab_id) {
+      $tid = $term->tid;
+      break;
+    }
+  }
+
+  // save the term id in the node
+  $node->taxonomy[$vocab_id][$tid] = $tid;
+
+  return;
+}
+
+/**
+ Get the taxonomy term associated with $vocab_name for the given node
+ */
+function _voipblog_get_category($node, $vocab_name) {
+// TODO: make $vocab_name optional for voipblogs
+  $vid = _voipblog_get_vocabulary_id($node, $vocab_name);
+  $terms = taxonomy_node_get_terms_by_vocabulary($node, $vid);
+  // retrieve the first term name
+  foreach($terms as $term) {
+    $term_name = $term->name;
+    break;
+  }
+  return $term_name;
+}
+ 
+/**
+ * Get the node's vocabulary id associated with the given vocabulary name
+ */
+function _voipblog_get_vocabulary_id($node, $vocab_name) {
+  static $vocab_id = NULL;
+
+  if(is_null($vocab_id)) {
+    $vocab_id = variable_get('voipblog_vocab_id', NULL);
+    if(is_null($vocab_id)) {
+      $vocabs = taxonomy_get_vocabularies($node->type);
+      foreach ($vocabs as $vocab_object) {
+        if ($vocab_object->name == $vocab_name) {
+          $vocab_id = $vocab_object->vid;
+          variable_set('voipblog_vocab_id', $vocab_id);
+          break;
+        }
+      }
+    }
+  }
+  
+  return $vocab_id;
+}
+
+/**
+ * Convert an URL into a file field
+ */
+function _voipblog_transfer_file($url, $validators=array()) {
+    $filename = rawurldecode(basename($url));
+    $filepath = file_create_filename($filename, file_directory_temp());
+
+    // Then make the actual request to download the file.
+    $data = file_get_contents($url);
+
+    //Save it to temporary file.
+    if ($fp = @fopen($filepath, 'w+')) {
+        fputs($fp, $data);
+        fclose($fp);
+    }
+
+    //Save it to default files directory.
+    $destination=file_directory_path();
+    $file = field_file_save_file($filepath, $validators, $destination);
+
+    // Delete the temporary file.
+    @unlink($filepath);
+
+    if ($file) {
+        return $file;
+    }
+
+    return NULL;
+}
+

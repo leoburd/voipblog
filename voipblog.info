@@ -1,0 +1,6 @@
+core = "6.x"
+dependencies[] = "voipcall"
+description = "Enables users to create and access blog entries via telephone, sms or other VoIP networks"
+name = "VoIP Blog"
+package = "voipblog"
+project = "voipblog"
