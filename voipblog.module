@@ -109,8 +109,6 @@ function voipblog_admin_form_submit($form, &$form_state) {
  */
 function voipblog_recording_callback($call_id, $recording_url, $recording_duration, $serialized_options='') {
 
-watchdog('voipblog', "voipblog_recording_callback($call_id, $recording_url, $recording_duration, $serialized_options)");
-
   $rc = TRUE;
   $options = unserialize($serialized_options);
   unset($options['nid']);
@@ -125,13 +123,6 @@ watchdog('voipblog', "voipblog_recording_callback($call_id, $recording_url, $rec
   $options['start_time'] = $start_time;
   $options['recording_url'] = $recording_url; 
   $options['recording_duration'] = $recording_duration;
-/*******
-                  '@node_type' => $options['node_type'],  
-                  '@audio_field_name' => $options['audio_field_name'],  
-                  '@type_field_name' => $options['type_field_name',  
-            );
-******/
-watchdog('voipblog', print_r($options, true));
 
   // create voipblog entry
   voipblog_create_node($recording_url, $options);
@@ -172,7 +163,6 @@ function voipblog_mail($key, &$message, $options) {
  * Create an voipblog node
  */
 function voipblog_create_node($url, $options=array()) {
-watchdog('debug', "create_node: $url, options: " . print_r($options,true));
 
   $node_type = $options['node_type'];
   $node->type = $node_type ? $node_type : variable_get('voipblog_node_type', 'story');
@@ -204,8 +194,6 @@ watchdog('debug', "create_node: $url, options: " . print_r($options,true));
     $node->$option_name = $option_value;
   }
 
-watchdog('debug', "node to be created: " . print_r($node, true));
-
   // create the node and let the hooks convert the new fields into something useful
   node_save($node);
 
@@ -213,8 +201,6 @@ watchdog('debug', "node to be created: " . print_r($node, true));
   foreach($options as $option_name => $option_value) {
     unset($node->$option_name);
   }
-
-watchdog('debug', "new node: " . print_r($node, true));
 
   return $node;
 }
