@@ -113,10 +113,7 @@ watchdog('voipblog', "voipblog_recording_callback($call_id, $recording_url, $rec
 
   $rc = TRUE;
   $options = unserialize($serialized_options);
-
-  // Log call blast with watchdog
-$log_message = t("(New voipblog recorded) call_id: $call_id, caller_number: $caller_number, start_time: $start_time, recording_url: $recording_url, recording_duration: $recording_duration, voipblog_type: $voipblog_type, options: " . print_r($options, TRUE));
-watchdog('voipblog', $log_message);
+  unset($options['nid']);
 
   $cid = VoipCall::getCidFromCallId($call_id);
   $call = VoipCall::load($cid);
@@ -134,7 +131,11 @@ watchdog('voipblog', $log_message);
                   '@type_field_name' => $options['type_field_name',  
             );
 ******/
+watchdog('voipblog', print_r($options, true));
 
+  // create voipblog entry
+  voipblog_create_node($recording_url, $options);
+  
   // send email notification
   $to = variable_get('voipblog_email', NULL);
   if($to) {
@@ -142,11 +143,6 @@ watchdog('voipblog', $log_message);
     $rc = $mail['result'];
   }
 
-  // create voipblog entry
-  if($rc) {
-    voipblog_create_node($recording_url, $options);
-  }
-  
   if ($rc){
     return t('Success.');
   }
@@ -176,6 +172,8 @@ function voipblog_mail($key, &$message, $options) {
  * Create an voipblog node
  */
 function voipblog_create_node($url, $options=array()) {
+watchdog('debug', "create_node: $url, options: " . print_r($options,true));
+
   $node_type = $options['node_type'];
   $node->type = $node_type ? $node_type : variable_get('voipblog_node_type', 'story');
 
@@ -206,6 +204,8 @@ function voipblog_create_node($url, $options=array()) {
     $node->$option_name = $option_value;
   }
 
+watchdog('debug', "node to be created: " . print_r($node, true));
+
   // create the node and let the hooks convert the new fields into something useful
   node_save($node);
 
@@ -213,6 +213,8 @@ function voipblog_create_node($url, $options=array()) {
   foreach($options as $option_name => $option_value) {
     unset($node->$option_name);
   }
+
+watchdog('debug', "new node: " . print_r($node, true));
 
   return $node;
 }
